@@ -285,7 +285,7 @@ class MainActivity : AppCompatActivity() {
 
         settingsContainer.addView(settingsRow("GitHub", "View source & releases") {
             try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/EdiBianco/OpenWhispr")))
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${UpdateChecker.GITHUB_REPO}")))
             } catch (e: Exception) {
                 toast("Couldn't open browser: ${e.message}")
             }

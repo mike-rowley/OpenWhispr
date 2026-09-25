@@ -1,7 +1,23 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Native library behind local transcription. The Kotlin wrappers in
+// com/k2fsa/sherpa/onnx are copied verbatim from this sherpa-onnx release and
+// the JNI library must match them exactly, so bump both together. The
+// static-link build has onnxruntime folded into the one .so, so nothing else
+// needs shipping. The archive is cached under the root .gradle/ dir so a
+// `clean` doesn't re-download it.
+val sherpaOnnxVersion = "1.12.28"
+val sherpaOnnxSha256 = "56f582b289ef656a70892c6a8e83647b6d25dd92eb1b016c57a7fd64678d10ed"
+val sherpaOnnxArchive = rootProject.file(
+    ".gradle/sherpa-onnx/sherpa-onnx-v$sherpaOnnxVersion-android-static-link-onnxruntime.tar.bz2"
+)
+val sherpaOnnxJniLibs = layout.buildDirectory.dir("generated/sherpa-onnx/jniLibs").get().asFile
 
 android {
     namespace = "com.edib.openwhispr"
@@ -45,7 +61,56 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     testOptions { unitTests { isIncludeAndroidResources = true } }
+
+    sourceSets["main"].jniLibs.srcDir(sherpaOnnxJniLibs)
 }
+
+val downloadSherpaOnnx by tasks.registering {
+    val archive = sherpaOnnxArchive
+    val expected = sherpaOnnxSha256
+    val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaOnnxVersion/${archive.name}"
+    inputs.property("sha256", expected)
+    outputs.file(archive)
+    doLast {
+        fun sha256(file: File): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            return md.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        if (archive.exists() && sha256(archive) == expected) return@doLast
+        archive.parentFile.mkdirs()
+        val part = File(archive.path + ".part")
+        logger.lifecycle("Downloading $url")
+        URI(url).toURL().openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+        val actual = sha256(part)
+        if (actual != expected) {
+            part.delete()
+            throw GradleException("sherpa-onnx archive checksum mismatch: expected $expected, got $actual")
+        }
+        part.renameTo(archive)
+    }
+}
+
+// Only arm64-v8a, matching ndk.abiFilters above.
+val extractSherpaOnnx by tasks.registering(Sync::class) {
+    dependsOn(downloadSherpaOnnx)
+    from(tarTree(resources.bzip2(sherpaOnnxArchive))) {
+        include("**/arm64-v8a/*.so")
+        eachFile { path = "arm64-v8a/$name" }
+        includeEmptyDirs = false
+    }
+    into(sherpaOnnxJniLibs)
+}
+
+tasks.named("preBuild") { dependsOn(extractSherpaOnnx) }
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

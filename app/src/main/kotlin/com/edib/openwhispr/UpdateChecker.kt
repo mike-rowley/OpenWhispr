@@ -14,10 +14,15 @@ import java.io.IOException
 object UpdateChecker {
     data class UpdateInfo(val version: String, val url: String, val apkUrl: String?, val notes: String?)
 
+    /** The repo this build updates from. This fork's builds share upstream's
+     * checked-in debug key, so pointing this at upstream would let an update
+     * silently replace the fork's customizations with upstream's build. */
+    const val GITHUB_REPO = "mike-rowley/OpenWhispr"
+
     private val client = OkHttpClient()
     private const val CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L // don't hammer GitHub on every app open
     private const val RELEASES_URL =
-        "https://api.github.com/repos/EdiBianco/OpenWhispr/releases/latest"
+        "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
     // Matches the <!--WHATS_NEW_START-->...<!--WHATS_NEW_END--> block the
     // release workflow wraps around that version's CHANGELOG.md section, so
