@@ -41,7 +41,8 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 26
-        versionName = "3.11.0"
+        // Fork builds are <upstream base>-fork.<N>; upstream main is 3.10.0.
+        versionName = "3.10.0-fork.1"
 
         ndk { abiFilters += "arm64-v8a" }
     }

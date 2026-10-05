@@ -9,7 +9,7 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
-## 3.11.0
+## 3.10.0-fork.1
 - Cleanup no longer acts on what you dictate (like drafting the email you described) -- it keeps your words, and falls back to exactly what you said if the result doesn't match
 - A short animated splash screen when the app starts (Android 12 and newer)
 - Recording overlay redesigned: the logo bars turn soft red and move with your voice, instead of a blinking microphone
