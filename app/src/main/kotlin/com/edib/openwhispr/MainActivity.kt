@@ -29,6 +29,11 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusSubtitle: TextView
+    // [ui] Status row dot + tap-to-fix target, and the cloud switch's subtitle.
+    private lateinit var statusRow: LinearLayout
+    private lateinit var statusDotView: View
+    private var statusAction: (() -> Unit)? = null
+    private lateinit var cloudRowSub: TextView
     private lateinit var audioRow: LinearLayout
     private lateinit var audioRowSub: TextView
     private lateinit var audioDot: View
@@ -67,6 +72,21 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // [ui] Android 12+ drops the splash as soon as the first frame is
+        // drawn, which would cut the icon animation short on a fast phone.
+        // Wait for whatever is left of it (at most 1s), then fade out.
+        // The splash itself is the Theme.OpenWhispr.Launch theme.
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            splashScreen.setOnExitAnimationListener { splash ->
+                val start = splash.iconAnimationStart?.toEpochMilli()
+                val duration = splash.iconAnimationDuration?.toMillis() ?: 0L
+                val remaining = if (start == null) 0L
+                    else (start + duration - System.currentTimeMillis()).coerceIn(0L, 1000L)
+                splash.animate().alpha(0f).setStartDelay(remaining).setDuration(200)
+                    .withEndAction { splash.remove() }.start()
+            }
+        }
+
         // Best-effort: lets the background service show its "still running"
         // notification (Android 13+ requires this permission for any
         // notification, including the foreground-service one). Not gated on
@@ -78,7 +98,11 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
         }
 
-        checkForUpdate()
+        // [privacy] The automatic update check on app open is opt-in (off by
+        // default, including for existing installs), so the app makes no
+        // request to GitHub unless the user enables it or taps "Check for
+        // updates".
+        if (prefs().getBoolean("auto_update_check", false)) checkForUpdate()
 
         val outer = vertical(0, 0)
 
@@ -87,7 +111,8 @@ class MainActivity : AppCompatActivity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(64), dp(24), dp(24))
+            // [ui] Less empty space above the title (was 64dp top).
+            setPadding(dp(24), dp(40), dp(24), dp(24))
         }
         header.addView(ImageView(this).apply {
             setImageResource(R.mipmap.ic_launcher)
@@ -111,30 +136,42 @@ class MainActivity : AppCompatActivity() {
         }
         outer.addView(tabLayout)
 
-        statusContainer = vertical(0)
+        // [ui] The status tab no longer starts with a section header, so
+        // give it the same breathing room below the tabs.
+        statusContainer = vertical(0).apply { setPadding(0, dp(16), 0, 0) }
         dictationContainer = vertical(0)
         settingsContainer = vertical(0)
 
+        // [ui] Each section's rows sit on a rounded panel (see group()).
+        // Rows, handlers and the references refresh() uses are unchanged;
+        // only the parent they're added to is.
+
         // ================= Status tab =================
 
-        val statusRow = settingsRow("Status", "Checking...")
+        // [ui] Leading dot + tap-to-fix; both are driven from refresh().
+        statusDotView = statusDot()
+        statusRow = settingsRow("Status", "Checking...", leading = statusDotView) {
+            statusAction?.invoke()
+        }
         statusSubtitle = statusRow.findViewWithTag("subtitle")
-        statusContainer.addView(statusRow)
+        statusContainer.addView(group().apply { addView(statusRow) })
 
         // --- Setup checklist card ---
+        statusContainer.addView(sectionHeader("Setup")) // [ui]
+        val setupGroup = group()
         setupCollapsedRow = settingsRow("Setup", "Checking...") {
             setupExpanded = !setupExpanded
             refresh()
         }
         setupCollapsedRowSub = setupCollapsedRow.findViewWithTag("subtitle")
-        statusContainer.addView(setupCollapsedRow)
+        setupGroup.addView(setupCollapsedRow)
 
         setupDoneSummary = TextView(this).apply {
             textSize = 14f
             setTextColor(DOT_GREEN)
             setPadding(dp(24), 0, dp(24), dp(8))
         }
-        statusContainer.addView(setupDoneSummary)
+        setupGroup.addView(setupDoneSummary)
 
         audioDot = statusDot()
         audioRow = settingsRow("Audio permission", "Checking...", leading = audioDot) {
@@ -143,7 +180,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         audioRowSub = audioRow.findViewWithTag("subtitle")
-        statusContainer.addView(audioRow)
+        setupGroup.addView(audioRow)
 
         accDot = statusDot()
         accRow = settingsRow("Accessibility service", "Checking...", leading = accDot) {
@@ -155,7 +192,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         accRowSub = accRow.findViewWithTag("subtitle")
-        statusContainer.addView(accRow)
+        setupGroup.addView(accRow)
 
         accCaption = TextView(this).apply {
             text = "Needed to detect the focused text field and insert the cleaned-up text there."
@@ -164,16 +201,18 @@ class MainActivity : AppCompatActivity() {
             alpha = 0.8f
             setPadding(dp(24), 0, dp(24), dp(12))
         }
-        statusContainer.addView(accCaption)
+        setupGroup.addView(accCaption)
 
         batteryDot = statusDot()
         batteryRow = settingsRow("Battery optimization", "Checking...", leading = batteryDot) {
             requestBatteryExemption()
         }
         batteryRowSub = batteryRow.findViewWithTag("subtitle")
-        statusContainer.addView(batteryRow)
+        setupGroup.addView(batteryRow)
+        statusContainer.addView(setupGroup)
 
         // --- Background service ---
+        statusContainer.addView(sectionHeader("Service")) // [ui]
         val serviceEnabled = prefs().getBoolean("service_master_enabled", true)
         val serviceSwitch = MaterialSwitch(this).apply {
             isChecked = serviceEnabled
@@ -189,7 +228,7 @@ class MainActivity : AppCompatActivity() {
             serviceSwitch.isChecked = newVal
             WhisperAccessibilityService.instance?.refreshMasterEnabled()
         }
-        statusContainer.addView(serviceRow)
+        statusContainer.addView(group().apply { addView(serviceRow) })
 
         // ================= Dictation tab =================
 
@@ -200,20 +239,25 @@ class MainActivity : AppCompatActivity() {
             isChecked = isCloud
             isClickable = false
         }
-        val cloudRow = settingsRow("Use cloud transcription", "Requires Groq API key", cloudSwitch) {
+        // [ui] Subtitle is set from the switch state in refresh().
+        val cloudRow = settingsRow("Use cloud transcription", "", cloudSwitch) {
             val newCloud = !cloudSwitch.isChecked
             prefs().edit().putBoolean("use_local", !newCloud).apply()
             cloudSwitch.isChecked = newCloud
             refresh()
         }
-        dictationContainer.addView(cloudRow)
+        cloudRowSub = cloudRow.findViewWithTag("subtitle")
+        dictationContainer.addView(group().apply { addView(cloudRow) })
 
         modelContainer = vertical(0)
         modelContainer.addView(sectionHeader("Local models"))
-        for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
+        val modelGroup = group()
+        for (m in MODEL_CATALOG) modelGroup.addView(buildModelRow(m))
+        modelContainer.addView(modelGroup)
         dictationContainer.addView(modelContainer)
 
         dictationContainer.addView(sectionHeader("Post-Processing"))
+        val postGroup = group()
 
         val isPostProcessing = prefs().getBoolean("use_post_processing", false)
         val postProcessSwitch = MaterialSwitch(this).apply {
@@ -226,7 +270,7 @@ class MainActivity : AppCompatActivity() {
             postProcessSwitch.isChecked = newVal
             refresh()
         }
-        dictationContainer.addView(postProcessRow)
+        postGroup.addView(postProcessRow)
 
         customInstructionsRow = settingsRow("Add custom instructions", "Tap to add extra refinements") {
             promptCustomInstructions()
@@ -234,9 +278,11 @@ class MainActivity : AppCompatActivity() {
         customInstructionsRowSub = customInstructionsRow.findViewWithTag("subtitle")
         customInstructionsRowSub.maxLines = 2
         customInstructionsRowSub.ellipsize = android.text.TextUtils.TruncateAt.END
-        dictationContainer.addView(customInstructionsRow)
+        postGroup.addView(customInstructionsRow)
+        dictationContainer.addView(postGroup)
 
         dictationContainer.addView(sectionHeader("Voice Commands"))
+        val voiceGroup = group()
 
         val isVoiceCommands = prefs().getBoolean("voice_commands_enabled", false)
         val voiceCommandsSwitch = MaterialSwitch(this).apply {
@@ -253,7 +299,7 @@ class MainActivity : AppCompatActivity() {
             voiceCommandsSwitch.isChecked = newVal
             refresh()
         }
-        dictationContainer.addView(voiceCommandsRow)
+        voiceGroup.addView(voiceCommandsRow)
 
         voiceCommandsDetailContainer = vertical(0)
 
@@ -264,26 +310,30 @@ class MainActivity : AppCompatActivity() {
         val examplesRow = settingsRow("Command examples", "See what you can say") { showCommandExamples() }
         voiceCommandsDetailContainer.addView(examplesRow)
 
-        dictationContainer.addView(voiceCommandsDetailContainer)
+        voiceGroup.addView(voiceCommandsDetailContainer)
+        dictationContainer.addView(voiceGroup)
 
         // ================= Settings tab =================
 
-        settingsContainer.addView(sectionHeader("Settings"))
+        // [ui] Header named after what the section holds (was "Settings",
+        // repeating the tab name).
+        settingsContainer.addView(sectionHeader("Groq"))
 
         val keyRow = settingsRow("Groq API Key", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
-        settingsContainer.addView(keyRow)
+        settingsContainer.addView(group().apply { addView(keyRow) })
 
         settingsContainer.addView(sectionHeader("About"))
+        val aboutGroup = group()
 
         val versionName = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
         } catch (e: Exception) {
             "unknown"
         }
-        settingsContainer.addView(settingsRow("Version", versionName))
+        // [ui] The separate "Version" row is folded into "Check for updates" below.
 
-        settingsContainer.addView(settingsRow("GitHub", "View source & releases") {
+        aboutGroup.addView(settingsRow("GitHub", "View source & releases") {
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${UpdateChecker.GITHUB_REPO}")))
             } catch (e: Exception) {
@@ -291,9 +341,33 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        settingsContainer.addView(settingsRow("Check for updates", "Tap to check now") {
+        aboutGroup.addView(settingsRow("Check for updates", "You're on v$versionName · tap to check") {
             checkForUpdate(force = true)
         })
+
+        // [privacy] Opt-in switch for the automatic check on app open (see onCreate).
+        val autoUpdateSwitch = MaterialSwitch(this).apply {
+            isChecked = prefs().getBoolean("auto_update_check", false)
+            isClickable = false
+        }
+        // [ui] Subtitle follows the switch state (it used to always say "Off").
+        fun autoUpdateText(on: Boolean) =
+            if (on) "On: checks when the app opens (at most every 12 h)"
+            else "Off: only when you tap Check for updates"
+        lateinit var autoUpdateRowSub: TextView
+        val autoUpdateRow = settingsRow(
+            "Check for updates automatically",
+            autoUpdateText(autoUpdateSwitch.isChecked),
+            autoUpdateSwitch
+        ) {
+            val newVal = !autoUpdateSwitch.isChecked
+            prefs().edit().putBoolean("auto_update_check", newVal).apply()
+            autoUpdateSwitch.isChecked = newVal
+            autoUpdateRowSub.text = autoUpdateText(newVal)
+        }
+        autoUpdateRowSub = autoUpdateRow.findViewWithTag("subtitle")
+        aboutGroup.addView(autoUpdateRow)
+        settingsContainer.addView(aboutGroup)
 
         outer.addView(statusContainer)
         outer.addView(dictationContainer)
@@ -478,7 +552,8 @@ class MainActivity : AppCompatActivity() {
         triggerPhraseRowSub.text = "\"${prefs().getString("command_trigger_phrase", "Whisper Command")}\""
 
         val apiKey = prefs().getString("api_key", "") ?: ""
-        keyRowSub.text = if (apiKey.isBlank()) "Tap to set"
+        // [ui] Say why the key matters when it's missing (was "Tap to set").
+        keyRowSub.text = if (apiKey.isBlank()) "Not set — needed for cloud and cleanup"
                          else if (apiKey.length > 7) "gsk_...${apiKey.takeLast(4)}"
                          else "gsk_...***"
 
@@ -500,8 +575,28 @@ class MainActivity : AppCompatActivity() {
         val postReady = !usePostProcessing || hasKey
         val ready = audio && acc && (localReady || cloudReady) && postReady
 
-        statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
+        // [ui] Say exactly what's missing, in the same terms as `ready`
+        // above (this list is its exact negation, so text and dot agree),
+        // and let a tap jump to the tab where it's fixed. Audio and
+        // accessibility rows are already shown right below, so no jump.
+        val (missing, action) = when {
+            !audio -> "Grant audio permission" to null
+            !acc -> "Turn on the accessibility service" to null
+            useLocal && !hasModel -> "Download a local model — Dictation tab" to { tabLayout.getTabAt(1)?.select(); Unit }
+            !useLocal && !hasKey -> "Add your Groq API key — Settings tab" to { tabLayout.getTabAt(2)?.select(); Unit }
+            usePostProcessing && !hasKey -> "Cleanup needs a Groq API key — Settings tab" to { tabLayout.getTabAt(2)?.select(); Unit }
+            else -> null to null
+        }
+        val mode = (if (useLocal) "on-device" else "cloud") + (if (usePostProcessing) " + cleanup" else "")
+        statusSubtitle.text = if (ready) "Ready · $mode — tap the overlay dot to dictate" else missing ?: "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(androidx.appcompat.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
+        statusDotView.background = dotDrawable(if (ready) DOT_GREEN else DOT_RED)
+        statusAction = if (ready) null else action
+        statusRow.isClickable = statusAction != null
+
+        // [ui] The cloud switch's subtitle says where audio goes.
+        cloudRowSub.text = if (useLocal) "Off: transcribed on this phone"
+                           else "On: audio is sent to Groq (needs API key)"
 
         refreshAllCards()
         maybeShowBatteryWarning(acc, unrestricted)
@@ -559,9 +654,10 @@ class MainActivity : AppCompatActivity() {
 
     /** Checks this repo's GitHub Releases. No backend involved. Shows a
      * dialog linking to the release page when a newer version is
-     * available. Runs automatically (and silently, when nothing's new)
-     * once per app-open; [force] bypasses the cache interval and always
-     * gives feedback, for the manual "Check for updates" row. */
+     * available. [privacy] Runs on app-open only if the user turned on
+     * "Check for updates automatically" (silently, when nothing's new);
+     * [force] bypasses the cache interval and always gives feedback, for
+     * the manual "Check for updates" row. */
     private fun checkForUpdate(force: Boolean = false) {
         val currentVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -578,13 +674,18 @@ class MainActivity : AppCompatActivity() {
                         .setMessage(
                             buildString {
                                 append("OpenWispr ${info.version} is available. You're on $currentVersion.")
-                                if (!info.notes.isNullOrBlank()) {
-                                    append("\n\nWhat's new:\n")
-                                    append(info.notes)
-                                }
+                                // [security] Always show a changelog section before
+                                // the user can update, even if the release has no notes.
+                                append("\n\nWhat's new:\n")
+                                append(
+                                    info.notes?.takeIf { it.isNotBlank() }
+                                        ?: "No release notes were published for this version."
+                                )
                             }
                         )
                         .setPositiveButton("Update") { _, _ -> downloadAndInstallUpdate(info) }
+                        // [security] Full release page (complete changelog) before deciding.
+                        .setNeutralButton("View on GitHub") { _, _ -> openReleasePage(info.url) }
                         .setNegativeButton("Later", null)
                         .show()
                 } else if (force) {
@@ -604,11 +705,7 @@ class MainActivity : AppCompatActivity() {
         if (apkUrl == null) {
             // Release has no .apk asset (shouldn't normally happen) -- fall
             // back to the release page rather than doing nothing.
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.url)))
-            } catch (e: Exception) {
-                toast("Couldn't open browser: ${e.message}")
-            }
+            openReleasePage(info.url)
             return
         }
 
@@ -634,15 +731,32 @@ class MainActivity : AppCompatActivity() {
         }
 
         toast("Downloading update…")
-        UpdateChecker.downloadApk(this, apkUrl) { file, error ->
+        // [security] Pass GitHub's published checksum; downloadApk only
+        // returns a file if it matches.
+        UpdateChecker.downloadApk(this, apkUrl, info.apkSha256) { file, error ->
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 if (file == null) {
-                    toast("Download failed: ${error ?: "unknown error"}")
+                    // [security] A failed download or failed checksum both end
+                    // here; nothing is installed. Offer the release page instead.
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Update not installed")
+                        .setMessage("Couldn't download or verify the update, so it wasn't installed.\n\nReason: ${error ?: "unknown error"}")
+                        .setPositiveButton("View on GitHub") { _, _ -> openReleasePage(info.url) }
+                        .setNegativeButton("Close", null)
+                        .show()
                     return@runOnUiThread
                 }
                 installApk(file)
             }
+        }
+    }
+
+    private fun openReleasePage(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            toast("Couldn't open browser: ${e.message}")
         }
     }
 
@@ -801,7 +915,10 @@ class MainActivity : AppCompatActivity() {
         if (leading != null) row.addView(leading)
 
         val textContainer = vertical(0).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LP_WRAP, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, LP_WRAP, 1f).apply {
+                // [ui] Keep wrapped text clear of the switch/button beside it.
+                if (widget != null) marginEnd = dp(16)
+            }
         }
 
         textContainer.addView(TextView(this).apply {
@@ -829,7 +946,22 @@ class MainActivity : AppCompatActivity() {
         textSize = 14f
         setTypeface(typeface, Typeface.BOLD)
         setTextColor(attrColor(androidx.appcompat.R.attr.colorPrimary)) // Neutral Android-like blue
-        setPadding(dp(24), dp(24), dp(24), dp(8))
+        // [ui] 40dp start = group() margin (16) + row padding (24), so the
+        // header lines up with the row text inside the panel below it.
+        setPadding(dp(40), dp(24), dp(24), dp(8))
+    }
+
+    /** [ui] A section panel: rounded, in the theme's surface-container
+     * colour (light/dark aware), clipping row ripples to its corners. */
+    private fun group() = vertical(0).apply {
+        background = GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            setColor(attrColor(com.google.android.material.R.attr.colorSurfaceContainer))
+        }
+        clipToOutline = true
+        layoutParams = LinearLayout.LayoutParams(LP_MATCH, LP_WRAP).apply {
+            setMargins(dp(16), 0, dp(16), dp(8))
+        }
     }
 
     private fun vertical(padH: Int, padV: Int = padH) = LinearLayout(this).apply {
