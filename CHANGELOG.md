@@ -9,6 +9,10 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
+## 3.10.0-fork.2
+- Dictation is typed straight into the field and your clipboard is left alone, so a paste right after dictating still gives you what you copied (turn off "Keep my clipboard" to go back to pasting)
+- Hold the floating button to see your last 5 dictations and tap one to insert it again (clear them in Dictation settings)
+
 ## 3.10.0-fork.1
 - Cleanup no longer acts on what you dictate (like drafting the email you described) -- it keeps your words, and falls back to exactly what you said if the result doesn't match
 - A short animated splash screen when the app starts (Android 12 and newer)
