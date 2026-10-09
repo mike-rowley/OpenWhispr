@@ -38,6 +38,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -79,9 +80,16 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val COLOR_REC_ACCENT = 0xFFFF6B6B.toInt()
         private const val COLOR_FEEDBACK_BG = 0xEE1C1C1E.toInt()
         private const val COLOR_RING = 0xFFE8EAED.toInt()
+        // Long-press panel's recording buttons.
+        private const val COLOR_PANEL_BUTTON = 0xFF2F6FED.toInt()
     }
 
     private enum class State { IDLE, RECORDING, TRANSCRIBING }
+
+    /** Whether the current recording's text goes in with whatever is on the
+     * clipboard, chosen from the long-press panel. A plain tap is NONE. */
+    private enum class ClipboardMode { NONE, PREPEND, APPEND }
+    private var clipboardMode = ClipboardMode.NONE
 
     private var state = State.IDLE
     private var overlayView: FrameLayout? = null
@@ -502,9 +510,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedbackLayoutParams = feedbackParams
     }
 
-    /** The long-press panel: the last few dictations beside the button. Tap
-     * one to insert it again; tap anywhere else (or wait) to close it. Not
-     * focusable, so the text field keeps focus and the keyboard stays up. */
+    /** The long-press panel, beside the button:
+     * - three recording buttons -- clipboard then dictation, dictation alone,
+     *   dictation then clipboard (see ClipboardMode);
+     * - a divider;
+     * - the recent dictations, tap one to insert it again.
+     * Tap anywhere else (or wait) to close it. Not focusable, so the text
+     * field keeps focus and the keyboard stays up. */
     private fun showHistoryPanel() {
         hideHistoryPanel()
         val bubble = layoutParams ?: return
@@ -522,6 +534,25 @@ class WhisperAccessibilityService : AccessibilityService() {
                 if (ev.action == MotionEvent.ACTION_OUTSIDE) { hideHistoryPanel(); true } else false
             }
         }
+
+        for ((label, mode) in listOf(
+            "Clipboard → Dictation" to ClipboardMode.PREPEND,
+            "Dictation" to ClipboardMode.NONE,
+            "Dictation → Clipboard" to ClipboardMode.APPEND
+        )) {
+            panel.addView(recordButton(label) {
+                hideHistoryPanel()
+                startRecording(mode)
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                setMargins((12 * dp).toInt(), (4 * dp).toInt(), (12 * dp).toInt(), (4 * dp).toInt())
+            })
+        }
+
+        panel.addView(View(this).apply { setBackgroundColor(0x33FFFFFF) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, maxOf(1, dp.toInt())).apply {
+                setMargins(padH, (8 * dp).toInt(), padH, (4 * dp).toInt())
+            })
+
         panel.addView(TextView(this).apply {
             text = "Recent dictations"
             textSize = 12f
@@ -529,9 +560,10 @@ class WhisperAccessibilityService : AccessibilityService() {
             setPadding(padH, (4 * dp).toInt(), padH, (4 * dp).toInt())
         })
 
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val items = DictationHistory.load(prefs())
         if (items.isEmpty()) {
-            panel.addView(TextView(this).apply {
+            list.addView(TextView(this).apply {
                 text = "Nothing dictated yet"
                 textSize = 15f
                 setTextColor(0x99FFFFFF.toInt())
@@ -539,7 +571,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             })
         }
         for (item in items) {
-            panel.addView(TextView(this).apply {
+            list.addView(TextView(this).apply {
                 text = DictationHistory.preview(item)
                 textSize = 15f
                 setTextColor(Color.WHITE)
@@ -553,6 +585,9 @@ class WhisperAccessibilityService : AccessibilityService() {
                 }
             })
         }
+        // The list scrolls once the panel would pass 70% of the screen height.
+        val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = true; addView(list) }
+        panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val params = WindowManager.LayoutParams(
             width,
@@ -562,12 +597,17 @@ class WhisperAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
-        // Beside the button, on the side with room, vertically centred on it.
-        panel.measure(
-            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
+        val unbounded = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        panel.measure(widthSpec, unbounded)
+        val maxHeight = (screenH * 0.7f).toInt()
+        if (panel.measuredHeight > maxHeight) {
+            scroll.layoutParams.height = (scroll.measuredHeight - (panel.measuredHeight - maxHeight)).coerceAtLeast((48 * dp).toInt())
+            panel.measure(widthSpec, unbounded)
+        }
         val height = panel.measuredHeight
+
+        // Beside the button, on the side with room, vertically centred on it.
         val onRight = bubble.x + ringSize / 2 > screenW / 2
         params.x = if (onRight) maxOf(margin, bubble.x - width - margin)
                    else minOf(screenW - width - margin, bubble.x + ringSize + margin)
@@ -581,6 +621,34 @@ class WhisperAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Couldn't show history panel", e)
         }
+    }
+
+    /** A filled, rounded button with a mic icon: the panel's recording
+     * actions, styled apart from the plain-text history rows below them. */
+    private fun recordButton(label: String, onClick: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        val pad = (12 * dp).toInt()
+        setPadding(pad, (10 * dp).toInt(), pad, (10 * dp).toInt())
+        background = RippleDrawable(
+            ColorStateList.valueOf(0x44FFFFFF),
+            GradientDrawable().apply { cornerRadius = 12 * dp; setColor(COLOR_PANEL_BUTTON) },
+            null
+        )
+        addView(ImageView(this@WhisperAccessibilityService).apply {
+            setImageResource(R.drawable.ic_mic)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+        }, LinearLayout.LayoutParams((20 * dp).toInt(), (20 * dp).toInt()).apply {
+            marginEnd = (10 * dp).toInt()
+        })
+        addView(TextView(this@WhisperAccessibilityService).apply {
+            text = label
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        isClickable = true
+        setOnClickListener { onClick() }
     }
 
     private fun hideHistoryPanel() {
@@ -714,8 +782,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startRecording() {
+    private fun startRecording(mode: ClipboardMode = ClipboardMode.NONE) {
         hideHistoryPanel()
+        clipboardMode = mode
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             toast("Grant audio permission in OpenWispr app"); return
@@ -1010,6 +1079,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun goIdle() {
         state = State.IDLE
+        clipboardMode = ClipboardMode.NONE
         setBusy(false)
         setRecordingLook(false) // [ui]
         setOpacity(active = false)
@@ -1026,7 +1096,75 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedbackDurationMs: Long = 2000
     ): Boolean {
         DictationHistory.add(prefs(), text)
+        val mode = clipboardMode
+        clipboardMode = ClipboardMode.NONE
+        if (mode != ClipboardMode.NONE && injectAroundClipboard(text, mode)) return true
         return injectText(text, feedback, feedbackDurationMs)
+    }
+
+    /** Inserts [text] together with whatever is on the clipboard: clipboard
+     * then dictation (PREPEND) or dictation then clipboard (APPEND), with a
+     * space between. Returns false, so the caller inserts the dictation
+     * alone, when there's no text field to work with.
+     *
+     * The app can't read the clipboard (Android 10+ only lets the focused
+     * app or the keyboard), so it never sees the clipboard text. It asks the
+     * field to paste, and works out from the field's length how much
+     * arrived. For APPEND it then moves the cursor back in front of that
+     * text and pastes the dictation there. If the app won't move the
+     * cursor, the dictation goes after the clipboard text instead, and the
+     * user is told. */
+    private fun injectAroundClipboard(text: String, mode: ClipboardMode): Boolean {
+        val candidates = findInjectionCandidates()
+        try {
+            val node = candidates.firstOrNull {
+                it.isEditable || it.className?.toString()?.contains("EditText") == true
+            } ?: return false
+
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            node.refresh()
+            val lengthBefore = fieldLength(node)
+            val caret = node.textSelectionStart
+
+            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            node.refresh()
+            val clipLength = if (pasted) (fieldLength(node) - lengthBefore).coerceAtLeast(0) else 0
+            Log.i(TAG, "Clipboard paste for $mode => $pasted, ${clipLength} chars")
+
+            // Nothing on the clipboard: just the dictation, no stray space.
+            if (clipLength == 0) {
+                copyToClipboard(text)
+                return tryInjectIntoNode(node, text)
+            }
+
+            if (mode == ClipboardMode.APPEND) {
+                if (caret >= 0 && moveCaret(node, caret)) {
+                    copyToClipboard("$text ")
+                    val ok = tryInjectIntoNode(node, "$text ")
+                    if (ok) moveCaret(node, caret + text.length + 1 + clipLength)
+                    return ok
+                }
+                showFeedback("Couldn't put the dictation first, so it went after the clipboard", 3000)
+            }
+            copyToClipboard(" $text")
+            return tryInjectIntoNode(node, " $text")
+        } finally {
+            candidates.forEach { it.recycle() }
+        }
+    }
+
+    /** The field's text length, counting placeholder hint text as empty. */
+    private fun fieldLength(node: AccessibilityNodeInfo): Int =
+        if (node.isShowingHintText) 0 else node.text?.length ?: 0
+
+    /** Puts the cursor at [position]; true only if the field reports it there. */
+    private fun moveCaret(node: AccessibilityNodeInfo, position: Int): Boolean {
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, position)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, position)
+        })
+        node.refresh()
+        return node.textSelectionStart == position
     }
 
     /** Inserts [text] into the focused field. Returns true if it landed.

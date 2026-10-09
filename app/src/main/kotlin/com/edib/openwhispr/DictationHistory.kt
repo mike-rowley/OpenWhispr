@@ -7,7 +7,7 @@ import org.json.JSONArray
  * can insert one again. Kept in the app's private prefs; never leaves the
  * device. */
 object DictationHistory {
-    const val MAX_ITEMS = 5
+    const val MAX_ITEMS = 10
     private const val KEY = "dictation_history"
 
     fun load(prefs: SharedPreferences): List<String> = decode(prefs.getString(KEY, null))

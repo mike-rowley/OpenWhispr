@@ -9,6 +9,10 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
+## 3.10.0-fork.4
+- Holding the floating button now opens a menu with three ways to dictate: "Clipboard → Dictation" and "Dictation → Clipboard" insert whatever you last copied before or after what you say, and "Dictation" works like a tap
+- The menu keeps your last 10 dictations (up from 5) below the buttons
+
 ## 3.10.0-fork.3
 - Fixed dictated text not appearing in the field: text is pasted again, as before 3.10.0-fork.2, and the "Keep my clipboard" setting is gone
 - Hold the floating button to get any of your last 5 dictations back

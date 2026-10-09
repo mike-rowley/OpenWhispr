@@ -6,10 +6,10 @@ import org.junit.Test
 class DictationHistoryTest {
 
     @Test
-    fun `newest dictation goes first and the list keeps five`() {
+    fun `newest dictation goes first and the list keeps ten`() {
         var items = emptyList<String>()
-        for (i in 1..7) items = DictationHistory.push(items, "dictation $i")
-        assertEquals(listOf("dictation 7", "dictation 6", "dictation 5", "dictation 4", "dictation 3"), items)
+        for (i in 1..12) items = DictationHistory.push(items, "dictation $i")
+        assertEquals((12 downTo 3).map { "dictation $it" }, items)
     }
 
     @Test
