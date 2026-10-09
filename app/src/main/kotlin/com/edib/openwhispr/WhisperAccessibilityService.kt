@@ -1,6 +1,7 @@
 package com.edib.openwhispr
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.InputMethod
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ClipData
@@ -1098,12 +1099,46 @@ class WhisperAccessibilityService : AccessibilityService() {
         DictationHistory.add(prefs(), text)
         val mode = clipboardMode
         clipboardMode = ClipboardMode.NONE
-        if (mode != ClipboardMode.NONE && injectAroundClipboard(text, mode)) return true
+        if (mode != ClipboardMode.NONE &&
+            (typeAroundClipboard(text, mode) || injectAroundClipboard(text, mode))) return true
         return injectText(text, feedback, feedbackDurationMs)
     }
 
-    /** Inserts [text] together with whatever is on the clipboard: clipboard
-     * then dictation (PREPEND) or dictation then clipboard (APPEND), with a
+    /** Android 13+: the focused field's input connection -- the same channel
+     * the keyboard types through, opened for this service by
+     * flagInputMethodEditor in accessibility_service_config.xml. Null on
+     * older Android or when no field has started input. */
+    private fun fieldConnection(): InputMethod.AccessibilityInputConnection? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) inputMethod?.currentInputConnection
+        else null
+
+    /** Inserts [text] with the clipboard through [fieldConnection]: types
+     * the dictation and asks the field to paste, in the order [mode] says.
+     * Both go through the field's own input connection, in order, so no
+     * cursor moves are needed, and the clipboard is never touched (the
+     * field pastes from it, but nothing is written to it). Returns false
+     * when there's no connection, so the paste-only fallback runs. */
+    private fun typeAroundClipboard(text: String, mode: ClipboardMode): Boolean {
+        val connection = fieldConnection() ?: return false
+        return try {
+            if (mode == ClipboardMode.PREPEND) {
+                connection.performContextMenuAction(android.R.id.paste)
+                connection.commitText(" $text", 1, null)
+            } else {
+                connection.commitText("$text ", 1, null)
+                connection.performContextMenuAction(android.R.id.paste)
+            }
+            Log.i(TAG, "Typed dictation around clipboard ($mode) via input connection")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Input connection insert failed", e)
+            false
+        }
+    }
+
+    /** Fallback for [typeAroundClipboard] on Android 12 and older: inserts
+     * [text] together with whatever is on the clipboard, clipboard then
+     * dictation (PREPEND) or dictation then clipboard (APPEND), with a
      * space between. Returns false, so the caller inserts the dictation
      * alone, when there's no text field to work with.
      *
@@ -1113,7 +1148,8 @@ class WhisperAccessibilityService : AccessibilityService() {
      * arrived. For APPEND it then moves the cursor back in front of that
      * text and pastes the dictation there. If the app won't move the
      * cursor, the dictation goes after the clipboard text instead, and the
-     * user is told. */
+     * user is told. (On the user's phone some apps report the cursor moved
+     * when it didn't -- hence the input-connection path above.) */
     private fun injectAroundClipboard(text: String, mode: ClipboardMode): Boolean {
         val candidates = findInjectionCandidates()
         try {

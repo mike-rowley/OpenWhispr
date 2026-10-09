@@ -9,6 +9,9 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
+## 3.10.0-fork.5
+- Fixed "Dictation → Clipboard" putting the clipboard first: on Android 13 and newer the dictation is now typed into the field the way a keyboard does, with your clipboard pasted after it (or before it, for "Clipboard → Dictation"), and your clipboard is left untouched
+
 ## 3.10.0-fork.4
 - Holding the floating button now opens a menu with three ways to dictate: "Clipboard → Dictation" and "Dictation → Clipboard" insert whatever you last copied before or after what you say, and "Dictation" works like a tap
 - The menu keeps your last 10 dictations (up from 5) below the buttons
