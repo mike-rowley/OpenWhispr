@@ -40,9 +40,9 @@ android {
         applicationId = "com.edib.openwhispr"
         minSdk = 30
         targetSdk = 35
-        versionCode = 30
+        versionCode = 31
         // Fork builds are <upstream base>-fork.<N>; upstream main is 3.10.0.
-        versionName = "3.10.0-fork.5"
+        versionName = "3.10.0-fork.6"
 
         ndk { abiFilters += "arm64-v8a" }
     }

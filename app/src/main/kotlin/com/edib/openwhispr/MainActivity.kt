@@ -259,6 +259,26 @@ class MainActivity : AppCompatActivity() {
         dictationContainer.addView(sectionHeader("Inserting text"))
         val insertGroup = group()
 
+        val keepClipboardSwitch = MaterialSwitch(this).apply {
+            isChecked = prefs().getBoolean("keep_clipboard", true)
+            isClickable = false
+        }
+        fun keepClipboardSubtitle(on: Boolean) =
+            if (on) "On: types into the field like a keyboard and leaves your clipboard alone (Android 13+)"
+            else "Off: pastes through the clipboard, replacing what you copied"
+        val keepClipboardRow = settingsRow(
+            "Keep my clipboard",
+            keepClipboardSubtitle(keepClipboardSwitch.isChecked),
+            keepClipboardSwitch
+        ) {}
+        keepClipboardRow.setOnClickListener {
+            val newVal = !keepClipboardSwitch.isChecked
+            prefs().edit().putBoolean("keep_clipboard", newVal).apply()
+            keepClipboardSwitch.isChecked = newVal
+            keepClipboardRow.findViewWithTag<TextView>("subtitle").text = keepClipboardSubtitle(newVal)
+        }
+        insertGroup.addView(keepClipboardRow)
+
         insertGroup.addView(settingsRow(
             "Recent dictations",
             "Hold the floating button to insert one of your last ${DictationHistory.MAX_ITEMS} again. Tap here to clear them."

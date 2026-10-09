@@ -82,7 +82,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val COLOR_FEEDBACK_BG = 0xEE1C1C1E.toInt()
         private const val COLOR_RING = 0xFFE8EAED.toInt()
         // Long-press panel's recording buttons.
-        private const val COLOR_PANEL_BUTTON = 0xFF2F6FED.toInt()
+        private const val COLOR_PANEL_BUTTON = 0xFF2C2C2E.toInt()
+        private const val COLOR_PANEL_BUTTON_OUTLINE = 0xFF6E6E73.toInt()
+        private const val COLOR_PANEL_BUTTON_TEXT = 0xFFAEAEB2.toInt()
     }
 
     private enum class State { IDLE, RECORDING, TRANSCRIBING }
@@ -624,29 +626,33 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** A filled, rounded button with a mic icon: the panel's recording
-     * actions, styled apart from the plain-text history rows below them. */
+    /** An outlined, rounded button with a mic icon: the panel's recording
+     * actions, set apart from the plain-text history rows below them. Dark
+     * fill, medium-grey outline, icon and text. */
     private fun recordButton(label: String, onClick: () -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         val pad = (12 * dp).toInt()
         setPadding(pad, (10 * dp).toInt(), pad, (10 * dp).toInt())
         background = RippleDrawable(
-            ColorStateList.valueOf(0x44FFFFFF),
-            GradientDrawable().apply { cornerRadius = 12 * dp; setColor(COLOR_PANEL_BUTTON) },
+            ColorStateList.valueOf(0x33FFFFFF),
+            GradientDrawable().apply {
+                cornerRadius = 12 * dp
+                setColor(COLOR_PANEL_BUTTON)
+                setStroke(maxOf(1, dp.toInt()), COLOR_PANEL_BUTTON_OUTLINE)
+            },
             null
         )
         addView(ImageView(this@WhisperAccessibilityService).apply {
             setImageResource(R.drawable.ic_mic)
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            imageTintList = ColorStateList.valueOf(COLOR_PANEL_BUTTON_TEXT)
         }, LinearLayout.LayoutParams((20 * dp).toInt(), (20 * dp).toInt()).apply {
             marginEnd = (10 * dp).toInt()
         })
         addView(TextView(this@WhisperAccessibilityService).apply {
             text = label
             textSize = 15f
-            setTextColor(Color.WHITE)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(COLOR_PANEL_BUTTON_TEXT)
         })
         isClickable = true
         setOnClickListener { onClick() }
@@ -1205,18 +1211,35 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Inserts [text] into the focused field. Returns true if it landed.
      *
-     * [privacy] Insertion pastes, so the text goes on the clipboard first
-     * (marked sensitive, see copyToClipboard); if nothing accepts it, it
-     * stays there for the user to paste. [feedback] is shown only in that
-     * case. Typing via ACTION_SET_TEXT instead, to leave the clipboard alone,
-     * was tried in 3.10.0-fork.2: apps reported success without the text
-     * appearing, so it's gone. The long-press history panel covers getting
-     * an earlier dictation back. */
+     * With "Keep my clipboard" on (the default) and Android 13+, the text is
+     * typed through the field's input connection, like a keyboard, so the
+     * clipboard is never touched. (ACTION_SET_TEXT was tried for this in
+     * 3.10.0-fork.2: apps reported success without the text appearing. The
+     * input connection is what fork.5's clipboard modes proved on the
+     * user's phone.)
+     *
+     * Otherwise -- setting off, older Android, or no connection -- it pastes:
+     * [privacy] the text goes on the clipboard first (marked sensitive, see
+     * copyToClipboard); if nothing accepts it, it stays there for the user
+     * to paste. [feedback] is shown only in that case. */
     private fun injectText(
         text: String,
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
     ): Boolean {
+        if (prefs().getBoolean("keep_clipboard", true)) {
+            val connection = fieldConnection()
+            if (connection != null) {
+                try {
+                    connection.commitText(text, 1, null)
+                    Log.i(TAG, "Typed text via input connection; clipboard untouched")
+                    return true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Input connection insert failed; pasting instead", e)
+                }
+            }
+        }
+
         copyToClipboard(text)
 
         val candidates = findInjectionCandidates()
