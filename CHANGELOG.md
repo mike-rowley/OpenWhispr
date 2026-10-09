@@ -9,6 +9,10 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
+## 3.10.0-fork.3
+- Fixed dictated text not appearing in the field: text is pasted again, as before 3.10.0-fork.2, and the "Keep my clipboard" setting is gone
+- Hold the floating button to get any of your last 5 dictations back
+
 ## 3.10.0-fork.2
 - Dictation is typed straight into the field and your clipboard is left alone, so a paste right after dictating still gives you what you copied (turn off "Keep my clipboard" to go back to pasting)
 - Hold the floating button to see your last 5 dictations and tap one to insert it again (clear them in Dictation settings)

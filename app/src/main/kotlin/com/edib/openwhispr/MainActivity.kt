@@ -259,26 +259,6 @@ class MainActivity : AppCompatActivity() {
         dictationContainer.addView(sectionHeader("Inserting text"))
         val insertGroup = group()
 
-        val insertDirectSwitch = MaterialSwitch(this).apply {
-            isChecked = prefs().getBoolean("insert_direct", true)
-            isClickable = false
-        }
-        fun insertDirectSubtitle(on: Boolean) =
-            if (on) "On: types into the field and leaves your clipboard alone"
-            else "Off: pastes through the clipboard, replacing what you copied"
-        val insertDirectRow = settingsRow(
-            "Keep my clipboard",
-            insertDirectSubtitle(insertDirectSwitch.isChecked),
-            insertDirectSwitch
-        ) {}
-        insertDirectRow.setOnClickListener {
-            val newVal = !insertDirectSwitch.isChecked
-            prefs().edit().putBoolean("insert_direct", newVal).apply()
-            insertDirectSwitch.isChecked = newVal
-            insertDirectRow.findViewWithTag<TextView>("subtitle").text = insertDirectSubtitle(newVal)
-        }
-        insertGroup.addView(insertDirectRow)
-
         insertGroup.addView(settingsRow(
             "Recent dictations",
             "Hold the floating button to insert one of your last ${DictationHistory.MAX_ITEMS} again. Tap here to clear them."

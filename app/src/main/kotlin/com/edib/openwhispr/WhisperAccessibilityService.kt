@@ -21,7 +21,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
-import android.text.SpannableStringBuilder
 import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
@@ -1032,38 +1031,29 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Inserts [text] into the focused field. Returns true if it landed.
      *
-     * With "insert_direct" on (the default), the text is typed straight into
-     * the field and the clipboard is left alone, so whatever the user copied
-     * last is still what a paste gives them. Only if no field takes it that
-     * way does it fall back to pasting, which puts the text on the clipboard
-     * (marked sensitive, see copyToClipboard); if nothing accepts the paste
-     * either, it stays there for the user to paste. [feedback] is shown only
-     * in that last case. */
+     * [privacy] Insertion pastes, so the text goes on the clipboard first
+     * (marked sensitive, see copyToClipboard); if nothing accepts it, it
+     * stays there for the user to paste. [feedback] is shown only in that
+     * case. Typing via ACTION_SET_TEXT instead, to leave the clipboard alone,
+     * was tried in 3.10.0-fork.2: apps reported success without the text
+     * appearing, so it's gone. The long-press history panel covers getting
+     * an earlier dictation back. */
     private fun injectText(
         text: String,
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
     ): Boolean {
+        copyToClipboard(text)
+
         val candidates = findInjectionCandidates()
         Log.i(TAG, "Injecting text into ${candidates.size} candidate node(s)")
 
         var injected = false
         try {
-            if (prefs().getBoolean("insert_direct", true)) {
-                for (candidate in candidates) {
-                    if (tryInsertDirectly(candidate, text)) {
-                        injected = true
-                        break
-                    }
-                }
-            }
-            if (!injected) {
-                copyToClipboard(text)
-                for (candidate in candidates) {
-                    if (tryInjectIntoNode(candidate, text)) {
-                        injected = true
-                        break
-                    }
+            for (candidate in candidates) {
+                if (tryInjectIntoNode(candidate, text)) {
+                    injected = true
+                    break
                 }
             }
         } finally {
@@ -1195,56 +1185,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         return false
-    }
-
-    /** Types [text] into [node] at its cursor (replacing any selection) with
-     * ACTION_SET_TEXT, without touching the clipboard, then puts the cursor
-     * after it.
-     *
-     * Skipped, so the paste path handles them:
-     * - nodes with an app-specific paste action (Termux and similar), which
-     *   aren't ordinary text fields;
-     * - password fields, whose masked text can't be read back, so setting
-     *   the whole field would wipe what's already typed.
-     *
-     * Placeholder text counts as empty: WhatsApp reports its "Message" hint
-     * as the field's text, which once came out as "MessageHello". */
-    private fun tryInsertDirectly(node: AccessibilityNodeInfo, text: String): Boolean {
-        if (findCustomPasteAction(node) != null) return false
-        val isTextField = node.isEditable || node.className?.toString()?.contains("EditText") == true
-        if (!isTextField || node.isPassword) return false
-
-        logNode("Trying direct insert on node", node)
-        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-
-        val raw = node.text
-        val hint = node.hintText
-        val showingHint = node.isShowingHintText ||
-            (raw != null && hint != null && raw.toString() == hint.toString())
-        val current: CharSequence = if (showingHint || raw == null) "" else raw
-
-        val length = current.length
-        val selStart = node.textSelectionStart
-        val selEnd = node.textSelectionEnd
-        val start = if (selStart in 0..length) selStart else length
-        val end = if (selEnd in 0..length) selEnd else start
-        val from = minOf(start, end)
-        val to = maxOf(start, end)
-
-        val updated = SpannableStringBuilder(current).replace(from, to, text)
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, updated)
-        }
-        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        Log.i(TAG, "Direct insert ACTION_SET_TEXT => $ok")
-        if (!ok) return false
-
-        val caret = from + text.length
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, caret)
-            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, caret)
-        })
-        return true
     }
 
     private fun findCustomPasteAction(node: AccessibilityNodeInfo): AccessibilityNodeInfo.AccessibilityAction? =
