@@ -9,6 +9,9 @@ No internal/process notes (CI changes, release cleanup, repo housekeeping,
 etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
+## 3.10.0-fork.7
+- Fixed the floating button not appearing in some apps (such as the Claude app's Code tab) even with the keyboard open: it now also shows whenever a text field is ready for typing or the keyboard is on screen
+
 ## 3.10.0-fork.6
 - "Keep my clipboard" is back, and on by default: on Android 13 and newer every dictation is typed into the field like a keyboard, so whatever you copied is still there to paste afterwards (turn it off in Dictation settings to paste through the clipboard again)
 - The menu's three dictation buttons are now dark grey with a grey outline instead of blue

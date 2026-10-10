@@ -22,6 +22,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
+import android.text.InputType
 import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
@@ -33,6 +34,7 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -279,7 +281,11 @@ class WhisperAccessibilityService : AccessibilityService() {
         try {
             val root = rootInActiveWindow
             val focused = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            accessibilityFocusSignal = focused != null && isEditableTextField(focused)
+            // The foreground app's own tree is only one witness: web-based
+            // composers (the Claude app's Code tab) often don't report an
+            // editable focus at all. The other two come from the system.
+            accessibilityFocusSignal = (focused != null && isEditableTextField(focused)) ||
+                hasActiveTextInput() || isKeyboardWindowShown()
             focused?.recycle()
             root?.recycle()
         } catch (e: Exception) {
@@ -293,6 +299,25 @@ class WhisperAccessibilityService : AccessibilityService() {
         val className = node.className?.toString().orEmpty()
         return node.isEditable || className.contains("EditText")
     }
+
+    /** Android 13+: a text field has an open input connection to this
+     * service (flagInputMethodEditor), the same one injectText types
+     * through. True whatever the app's accessibility tree says. */
+    private fun hasActiveTextInput(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val method = inputMethod ?: return false
+        val inputType = method.currentInputEditorInfo?.inputType ?: return false
+        return method.currentInputStarted && inputType != InputType.TYPE_NULL
+    }
+
+    /** The keyboard's own window is on screen. Needs
+     * flagRetrieveInteractiveWindows; without it the list is empty. */
+    private fun isKeyboardWindowShown(): Boolean =
+        try {
+            windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+        } catch (e: Exception) {
+            false
+        }
 
     /** Fed by the overlay view's WindowInsets listener -- catches apps whose
      * custom composers (WhatsApp, Telegram, ...) never fire accessibility
